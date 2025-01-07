@@ -10,6 +10,7 @@ from enum import Enum
 class Robotstate(Enum):
     IDLE = "Idle"
     MOVE_TO_KITCHEN = "Moving to Kitchen"
+    MOVE_TO_TABLE = "Moving to Table"
     WAITING = "Waiting for Confirmation"
     DELIVERING = "Delivering Food"
     RETURNING_HOME = "Returning Home"
@@ -28,15 +29,24 @@ class RobotButler(Node):
         self.state = Robotstate.IDLE
         self.orders = []
         self.get_logger().info("Initializing Robot Butler Node...")
+        self.navigation_client = ActionClient(self,NavigateToPose,'navigate_to_pose')
+    
         self.subscription = self.create_subscription(
-            String,
-            'order_topic',self.order_callback,10
-        )
+            String, 'order_topic', self.order_callback,10)
+        
+        
         self.status_publisher = self.create_publisher(String,'robot_status',10)
         self.status_publisher.publish(String(data="Moving to kitchen"))
 
-        self.navigation_client = ActionClient(self,NavigateToPose,'navigate_to_pose')
-
+        
+    def get_waypoint(name):
+        pose = PoseStamped()
+        pose.header.frame_id = 'map'
+        pose.pose.position.x = WAYPOINTS[name][0]
+        pose.pose.position.y = WAYPOINTS[name][1]
+        pose.pose.orientation.z = WAYPOINTS[name][2]
+        return pose
+    
     def send_goal(self,pose):
         goal_msg =NavigateToPose.Goal()
         goal_msg.pose = pose
@@ -46,14 +56,57 @@ class RobotButler(Node):
     def goal_response_callback(self,future):
         self.get_logger().info('Goal sent sucess')
 
-    
+    def order_callback(self, msg):
+        self.get_logger().info(f"Order received: {msg.data}")
+        self.orders.append(msg.data)
+        self.process_order()
+
+    def wait_for_confirmation(self, duration,timeout_callback):
+        self.timer = self.create_timer(duration,timeout_callback)
+
+    def handle_kitchen_timeout(self):
+        self.get_logger().info("Timeout,Returing to home!")
+        self.set_state(Robotstate.RETURNING_HOME)
+        self.send_goal(self.get_waypoint('home'))
+
+    def handle_table_timeout(self):
+        self.get_logger().info("Timeout,Returing to kitchen!")
+        self.set_state(Robotstate.MOVE_TO_KITCHEN)
+        self.send_goal(self.get_waypoint('home'))
+
+    def cancel_task(self):
+        if self.state == Robotstate.MOVE_TO_KITCHEN:
+            self.get_logger().info("Task canceled,Returning to home.")
+            self.set_state(Robotstate.RETURNING_HOME)
+            self.send_goal(self.get_waypoint('home'))
+        elif self.state == Robotstate.MOVE_TO_TABLE:
+            self.get_logger().info("Task canceled,Returning to Kitchen.")
+            self.set_state(Robotstate.MOVE_TO_KITCHEN)
+            self.send_goal(self.get_waypoint('Kitchen'))
+
+    def process_order(self):
+        if not self.orders:
+            return
+        
+        current_order = self.orders.pop(0)
+        self.process_single_order(current_order)
+
+    def process_single_order(self,table):
+        self.set_state(Robotstate.MOVE_TO_KITCHEN)
+        self.send_goal(self.get_waypoint('Kitchen'))
+        self.wait_for_confirmation(10.0,self.handle_kitchen_timeout)
+
+        self.set_state(Robotstate.DELIVERING)
+        self.send_goal(self.get_waypoint('table'))
+        self.wait_for_confirmation(10.0,self.handle_table_timeout)
+
+        self.set_state(Robotstate.RETURNING_HOME)
+        self.send_goal(self.get_waypoint('home'))
+
     def set_state(self, new_state):
         self.get_logger().info(f"State changed to: {new_state}")
         self.state = new_state
 
-    
-    def get_waypoint(name):
-        return WAYPOINTS[name]
     
 def main(args=None):
     rclpy.init(args=args)
