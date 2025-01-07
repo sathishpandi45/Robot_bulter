@@ -4,6 +4,7 @@ from rclpy.node import Node
 from rclpy.action import ActionClient
 from nav2_msgs.action import NavigateToPose
 from geometry_msgs.msg import PoseStamped
+from std_msgs.msg import String
 from enum import Enum
 
 class Robotstate(Enum):
@@ -13,11 +14,27 @@ class Robotstate(Enum):
     DELIVERING = "Delivering Food"
     RETURNING_HOME = "Returning Home"
 
-    
+WAYPOINTS = {
+    'home': [0.0,0.0,0.0],
+    'kitchen': [1.0,2.0,1.57],
+    'table1': [2.0,-2.0,3.14],
+    'table2': [4.0,-2.0,3.14],
+    'table3': [6.0,-2.0,3.14],
+}   
 
 class RobotButler(Node):
     def __init__(self):
         super().__init__("robot_butler")
+        self.state = Robotstate.IDLE
+        self.orders = []
+        self.get_logger().info("Initializing Robot Butler Node...")
+        self.subscription = self.create_subscription(
+            String,
+            'order_topic',self.order_callback,10
+        )
+        self.status_publisher = self.create_publisher(String,'robot_status',10)
+        self.status_publisher.publish(String(data="Moving to kitchen"))
+
         self.navigation_client = ActionClient(self,NavigateToPose,'navigate_to_pose')
 
     def send_goal(self,pose):
@@ -29,20 +46,14 @@ class RobotButler(Node):
     def goal_response_callback(self,future):
         self.get_logger().info('Goal sent sucess')
 
+    
     def set_state(self, new_state):
         self.get_logger().info(f"State changed to: {new_state}")
         self.state = new_state
 
-    WAYPOINT = {
-        'home': [0.0,0.0,0.0],
-        'kitchen': [1.0,2.0,1.57],
-        'table1': [2.0,-2.0,3.14],
-        'table2': [4.0,-2.0,3.14],
-        'table3': [6.0,-2.0,3.14],
-
-    }
+    
     def get_waypoint(name):
-        return WAYPOINT[name]
+        return WAYPOINTS[name]
     
 def main(args=None):
     rclpy.init(args=args)
